@@ -1,6 +1,8 @@
-import { TaskRequest, TaskResult, WorkerAdapter, WorkerId, UsageSnapshot, TaskHandle, StreamChunk, WorkerSelection } from './models';
+import { TaskRequest, TaskResult, WorkerAdapter, WorkerId, UsageSnapshot, TaskHandle, StreamChunk, WorkerSelection, AgentTask } from './models';
+import { EventEmitter } from 'node:events';
 
 export class WorkerManager {
+  readonly events = new EventEmitter();
   private readonly usage = new Map<WorkerId, UsageSnapshot>();
   private active = new Map<number, { worker: WorkerId; handle: TaskHandle }>();
   private nextId = 1;
@@ -8,7 +10,8 @@ export class WorkerManager {
     for (const id of Object.keys(adapters) as WorkerId[]) this.usage.set(id, { worker: id, running: 0, completed: 0, failures: 0, usage: { state: 'unknown' }, usageThresholdReached: false, available: true });
   }
   snapshots(): UsageSnapshot[] { return [...this.usage.values()].map(s => ({ ...s })); }
-  cancelActive(): void { for (const task of this.active.values()) task.handle.cancel(); this.active.clear(); }
+  cancelActive(): void { for (const task of this.active.values()) task.handle.cancel(); }
+  cancelTask(taskId: number): void { this.active.get(taskId)?.handle.cancel(); }
   activeTasks(): number { return this.active.size; }
   private choose(selection: WorkerSelection = 'auto', excluded: WorkerId[] = []): WorkerId {
     if (selection !== 'auto') return selection;
@@ -32,16 +35,19 @@ export class WorkerManager {
       const taskId = this.nextId++;
       const handle = this.adapters[worker].run({ ...request, worker }, onChunk);
       this.active.set(taskId, { worker, handle });
+      this.events.emit('started', { taskId, worker, request });
       return handle.promise.then(result => {
         stats.running--; stats.completed++; stats.lastUsed = Date.now();
         stats.usage = { state: 'estimated', completedEstimate: stats.completed };
         stats.usageThresholdReached = stats.completed >= this.usageThreshold;
         if (result.exitCode !== 0) { stats.failures++; stats.available = stats.failures < this.failureThreshold; }
         this.active.delete(taskId);
+        this.events.emit('finished', { taskId, result });
         if (result.exitCode !== 0 && index + 1 < candidates.length) return attempt(index + 1);
         return { ...result, attempts };
       }, error => {
         stats.running--; stats.failures++; stats.available = stats.failures < this.failureThreshold; this.active.delete(taskId);
+        this.events.emit('failed', { taskId, error });
         if (index + 1 < candidates.length) return attempt(index + 1);
         throw error;
       });

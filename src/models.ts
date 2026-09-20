@@ -15,6 +15,7 @@ export interface TaskRequest {
   cwd: string;
   worker?: WorkerSelection;
   timeoutMs?: number;
+  context?: { file?: string; selection?: string; language?: string };
 }
 
 export interface StreamChunk {
@@ -28,6 +29,21 @@ export interface TaskResult {
   output: string;
   durationMs: number;
   attempts?: WorkerId[];
+}
+
+export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export interface AgentTask {
+  id: string;
+  prompt: string;
+  cwd: string;
+  worker: WorkerSelection;
+  status: TaskStatus;
+  createdAt: number;
+  updatedAt: number;
+  result?: TaskResult;
+  error?: string;
+  context?: TaskRequest['context'];
+  activity: string[];
 }
 
 export interface UsageSnapshot {

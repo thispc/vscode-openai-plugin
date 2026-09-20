@@ -38,3 +38,11 @@ test('automatic routing avoids workers at the estimated usage threshold', async 
   const result = await manager.run({ prompt: 'second', cwd: '.', worker: 'auto' }, () => {});
   assert.equal(result.worker, 'claude');
 });
+test('manager emits lifecycle events for streamed work', async () => {
+  const manager = new WorkerManager({ codex: new Fake('codex'), claude: new Fake('claude'), gemini: new Fake('gemini') });
+  const events: string[] = [];
+  manager.events.on('started', () => events.push('started'));
+  manager.events.on('finished', () => events.push('finished'));
+  await manager.run({ prompt: 'stream', cwd: '.', worker: 'codex' }, () => {});
+  assert.deepEqual(events, ['started', 'finished']);
+});

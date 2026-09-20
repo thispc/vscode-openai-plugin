@@ -17,7 +17,24 @@
       { "command": "localCliWorkers.showWorkers", "title": "Local CLI Workers: Show Worker Status" },
       { "command": "localCliWorkers.checkAuth", "title": "Local CLI Workers: Check CLI Authentication" },
       { "command": "localCliWorkers.openWorkerTerminal", "title": "Local CLI Workers: Open Worker Terminal" }
+      ,{ "command": "localCliWorkers.resumeTask", "title": "Local CLI Workers: Resume Task" }
+      ,{ "command": "localCliWorkers.clearHistory", "title": "Local CLI Workers: Clear Task History" }
     ],
+    "views": {
+      "localCliWorkers": [
+        { "id": "localCliWorkers.tasks", "name": "Agent Tasks", "when": "workspaceFolderCount > 0", "icon": "$(hubot)" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "localCliWorkers.runTask", "when": "view == localCliWorkers.tasks", "group": "navigation" },
+        { "command": "localCliWorkers.clearHistory", "when": "view == localCliWorkers.tasks", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "localCliWorkers.cancelTask", "when": "view == localCliWorkers.tasks && viewItem == runningTask", "group": "inline" },
+        { "command": "localCliWorkers.resumeTask", "when": "view == localCliWorkers.tasks && viewItem == task", "group": "inline" }
+      ]
+    },
     "configuration": {
       "title": "Local CLI Workers",
       "properties": {
@@ -38,7 +55,7 @@
       }
     }
   },
-  "scripts": { "compile": "tsc -p tsconfig.json", "watch": "tsc -w -p tsconfig.json", "test": "npm run compile && node --test dist/test/**/*.test.js", "package": "npm run compile" },
+  "scripts": { "compile": "tsc -p tsconfig.json", "watch": "tsc -w -p tsconfig.json", "test": "npm run compile && node --test dist/test/**/*.test.js", "package": "npm run compile && vsce package --no-dependencies" },
   "devDependencies": { "@types/node": "^20.11.30", "@types/vscode": "^1.88.0", "typescript": "^5.4.5" },
   "dependencies": {}
 }
