@@ -39,6 +39,16 @@ export function activate(context: vscode.ExtensionContext): void {
   contextState = context.workspaceState;
   taskTree = new TaskTreeProvider(() => contextState.get<AgentTask[]>(tasksKey, []));
   output = vscode.window.createOutputChannel('Local CLI Workers');
+  manager.events.on('limited', ({ worker, until, next, reason }: { worker: string; until: number; next?: string; reason?: string }) => {
+    const back = new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const models = readConfig().modelIds as Record<string, string | undefined>;
+    const to = next ? `${next}${models[next] ? ` (${models[next]})` : ''}` : 'nothing left';
+    const line = next
+      ? `${worker} is out of limit until ${back}. Switching to ${to}.`
+      : `${worker} is out of limit until ${back}, and no other worker is free.`;
+    output.appendLine(`\n>> ${line}${reason ? `\n   ${worker} said: ${reason}` : ''}`);
+    vscode.window.showWarningMessage(line);
+  });
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'localCliWorkers.runTask'; status.text = '$(hubot) Workers'; status.tooltip = 'Run a local CLI worker task'; status.show();
   context.subscriptions.push(status, output);
@@ -78,6 +88,9 @@ async function runTask(resume?: AgentTask): Promise<void> {
     const history = contextState.get<Array<{ prompt: string; worker: string; at: number }>>(historyKey, []);
     await contextState.update(historyKey, [...history.slice(-49), { prompt, worker: result.worker, at: Date.now() }]);
     status.text = `$(hubot) ${result.worker}`;
+    if ((result.attempts?.length ?? 0) > 1) {
+      output.appendLine(`\n>> Done by ${result.worker} after trying ${result.attempts!.join(' then ')}.`);
+    }
     if (result.exitCode !== 0) vscode.window.showErrorMessage(`${result.worker} exited with code ${result.exitCode}`);
   } catch (error) { task.status = /cancel/i.test(String(error)) ? 'cancelled' : 'failed'; task.error = String(error); task.updatedAt = Date.now(); task.activity.push(task.error); await saveTask(task); status.text = '$(hubot) Workers'; vscode.window.showErrorMessage(String(error)); }
 }

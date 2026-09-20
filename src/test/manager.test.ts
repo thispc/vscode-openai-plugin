@@ -89,3 +89,24 @@ test('every worker out of quota says when one returns', async () => {
   await assert.rejects(() => Promise.resolve().then(() => manager.run({ prompt: 'y', cwd: '.', worker: 'auto' }, () => {})),
     /out of quota|first comes back/);
 });
+
+test('the limited event names who is taking over', async () => {
+  class Limited implements WorkerAdapter {
+    readonly id = 'codex' as const;
+    run(): TaskHandle {
+      return { promise: Promise.resolve<TaskResult>({ worker: 'codex', exitCode: 1, durationMs: 1,
+        output: 'stream error\nYou have hit your usage limit, resets in 2 hours', rateLimited: true,
+        resetAt: Date.now() + 7_200_000 }), cancel() {} };
+    }
+    checkAuth(): Promise<AuthStatus> { return Promise.resolve({ authenticated: true, detail: 'ok' }); }
+  }
+  const manager = new WorkerManager({ codex: new Limited(), claude: new Fake('claude') });
+  const seen: Array<{ worker: string; next?: string; reason?: string }> = [];
+  manager.events.on('limited', e => seen.push(e));
+  const result = await manager.run({ prompt: 'x', cwd: '.', worker: 'auto' }, () => {});
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].worker, 'codex');
+  assert.equal(seen[0].next, 'claude', 'the message can say where the task went');
+  assert.match(seen[0].reason ?? '', /usage limit/, 'and why, in the CLI own words');
+  assert.deepEqual(result.attempts, ['codex', 'claude']);
+});

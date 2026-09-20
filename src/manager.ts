@@ -25,6 +25,11 @@ export class WorkerManager {
     return false;
   }
 
+  /** Who would take the task next, for the message that says where it is going. */
+  private peekNext(excluded: WorkerId[]): WorkerId | undefined {
+    try { return this.choose('auto', excluded); } catch { return undefined; }
+  }
+
   private choose(selection: WorkerSelection = 'auto', excluded: WorkerId[] = []): WorkerId {
     if (selection !== 'auto') return selection;
     const now = Date.now();
@@ -63,7 +68,8 @@ export class WorkerManager {
           // the subscription's window is spent, which says nothing about this worker's health
           stats.limitedUntil = result.resetAt ?? Date.now() + this.limitedCooldownMs;
           stats.usageThresholdReached = true;
-          this.events.emit('limited', { worker, until: stats.limitedUntil });
+          const next = this.peekNext(attempts.concat(worker));
+          this.events.emit('limited', { worker, until: stats.limitedUntil, next, reason: result.output.trim().split('\n').pop() });
         } else if (result.exitCode !== 0) {
           stats.failures++; stats.available = stats.failures < this.failureThreshold;
         }
