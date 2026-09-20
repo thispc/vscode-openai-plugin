@@ -3,6 +3,7 @@ import { readConfig } from './config';
 import { createAdapters } from './adapters';
 import { say, newConversation } from './chat';
 import { ChatPanel } from './panel';
+import { readQuota, gearFor, planFor, describe as describeQuota } from './quota';
 import { Conversation } from './models';
 import { WorkerAdapter, WorkerId, AgentTask, WorkerSelection } from './models';
 import { WorkerManager } from './manager';
@@ -39,6 +40,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const config = readConfig();
   adapters = createAdapters(config.commands, config.codexSandbox, config.modelIds);
   manager = new WorkerManager(adapters, config.maxConcurrentTasks, config.failureThreshold, config.usageThreshold, config.limitedCooldownMs);
+  manager.quotaPlan = () => {
+    const cfg = readConfig();
+    if (!cfg.powerSaver) return undefined;
+    return planFor(gearFor(readQuota(), cfg.thresholds), cfg.thresholds);
+  };
   contextState = context.workspaceState;
   taskTree = new TaskTreeProvider(() => contextState.get<AgentTask[]>(tasksKey, []));
   output = vscode.window.createOutputChannel('Local CLI Workers');
@@ -58,7 +64,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('localCliWorkers.chat',
       () => ChatPanel.show(context, manager, readConfig().modelIds as Record<string, string | undefined>, readConfig().taskTimeoutMs)),
     vscode.commands.registerCommand('localCliWorkers.chatInput', chat),
-    vscode.commands.registerCommand('localCliWorkers.newChat', newChat));
+    vscode.commands.registerCommand('localCliWorkers.newChat', newChat),
+    vscode.commands.registerCommand('localCliWorkers.showQuota', () => {
+      const cfg = readConfig();
+      const line = describeQuota(readQuota(), cfg.thresholds);
+      output.appendLine(`\n${line}`);
+      void vscode.window.showInformationMessage(line, 'Settings').then(a => {
+        if (a) void vscode.commands.executeCommand('workbench.action.openSettings', 'localCliWorkers.powerSaver');
+      });
+    }));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('localCliWorkers.tasks', taskTree));
   context.subscriptions.push(vscode.commands.registerCommand('localCliWorkers.runTask', runTask));
   context.subscriptions.push(vscode.commands.registerCommand('localCliWorkers.cancelTask', () => manager.cancelActive()));

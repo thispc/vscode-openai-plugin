@@ -31,6 +31,10 @@
 				"title": "Local CLI Workers: Chat (input box)"
 			},
 			{
+				"command": "localCliWorkers.showQuota",
+				"title": "Local CLI Workers: Show Claude Usage and Gear"
+			},
+			{
 				"command": "localCliWorkers.runTask",
 				"title": "Local CLI Workers: Run Task"
 			},
@@ -181,6 +185,35 @@
 					"type": "string",
 					"default": "",
 					"description": "Model passed to codex -m. Empty uses the Codex default for your ChatGPT plan."
+				},
+				"localCliWorkers.powerSaver.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Pick the worker and model from how much of Claude's window is left, read from ~/.claude/usage-cache.json."
+				},
+				"localCliWorkers.powerSaver.bestAbovePercent": {
+					"type": "number",
+					"default": 70,
+					"minimum": 0,
+					"maximum": 100,
+					"description": "With at least this much of Claude's window left, use the best model."
+				},
+				"localCliWorkers.powerSaver.saverBelowPercent": {
+					"type": "number",
+					"default": 30,
+					"minimum": 0,
+					"maximum": 100,
+					"description": "With this much or less left, send the work to codex and save the rest of Claude's window."
+				},
+				"localCliWorkers.powerSaver.bestModel": {
+					"type": "string",
+					"default": "fable",
+					"description": "Model to use when there is plenty left."
+				},
+				"localCliWorkers.powerSaver.normalModel": {
+					"type": "string",
+					"default": "sonnet",
+					"description": "Model to use in between."
 				}
 			}
 		}

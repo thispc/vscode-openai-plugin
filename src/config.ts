@@ -13,6 +13,8 @@ export interface WorkerConfig {
   codexSandbox: string;
   limitedCooldownMs: number;
   modelIds: Partial<Record<WorkerId, string>>;
+  powerSaver: boolean;
+  thresholds: { bestAbove: number; saverBelow: number; bestModel: string; normalModel: string };
   profiles: Record<WorkerId, WorkerProfile>;
 }
 
@@ -29,6 +31,13 @@ export function readConfig(): WorkerConfig {
     modelIds: {
       codex: c.get<string>('codexModelId', '') || undefined,
       claude: c.get<string>('claudeModelId', 'sonnet') || undefined
+    },
+    powerSaver: c.get<boolean>('powerSaver.enabled', true),
+    thresholds: {
+      bestAbove: c.get<number>('powerSaver.bestAbovePercent', 70),
+      saverBelow: c.get<number>('powerSaver.saverBelowPercent', 30),
+      bestModel: c.get<string>('powerSaver.bestModel', 'fable'),
+      normalModel: c.get<string>('powerSaver.normalModel', 'sonnet')
     },
     limitedCooldownMs: c.get<number>('limitedCooldownMs', 1800000),
     maxConcurrentTasks: c.get<number>('maxConcurrentTasks', 1),

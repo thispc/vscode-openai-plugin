@@ -31,8 +31,18 @@ export class WorkerManager {
     return false;
   }
 
+  /** Set by the extension so routing can follow how much of Claude's window is left. */
+  quotaPlan?: () => { worker: WorkerId; model?: string } | undefined;
+
   /** Who auto-routing would pick right now, so a caller can prepare that worker's prompt. */
-  preferredWorker(): WorkerId | undefined { return this.peekNext([]); }
+  preferredWorker(): WorkerId | undefined {
+    const wanted = this.quotaPlan?.()?.worker;
+    if (wanted) {
+      const s = this.usage.get(wanted);
+      if (s && s.available && !this.limited(s)) return wanted;   // the gear's choice, unless it is spent
+    }
+    return this.peekNext([]);
+  }
 
   /** Who would take the task next, for the message that says where it is going. */
   private peekNext(excluded: WorkerId[]): WorkerId | undefined {
@@ -42,6 +52,11 @@ export class WorkerManager {
   private choose(selection: WorkerSelection = 'auto', excluded: WorkerId[] = []): WorkerId {
     if (selection !== 'auto') return selection;
     const now = Date.now();
+    const wanted = this.quotaPlan?.()?.worker;
+    if (wanted && !excluded.includes(wanted)) {
+      const s = this.usage.get(wanted);
+      if (s && s.available && s.failures < this.failureThreshold && !this.limited(s, now)) return wanted;
+    }
     const candidates = [...this.usage.values()].filter(s =>
       s.available &&
       s.failures < this.failureThreshold &&
