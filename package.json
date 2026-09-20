@@ -1,0 +1,45 @@
+{
+  "name": "local-cli-workers",
+  "displayName": "Local CLI Workers",
+  "description": "Route VS Code tasks to locally installed Codex, Claude Code, or Gemini CLI workers.",
+  "version": "0.1.0",
+  "publisher": "local-cli-workers",
+  "license": "MIT",
+  "repository": "https://example.invalid/local-cli-workers",
+  "engines": { "vscode": "^1.88.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "localCliWorkers.runTask", "title": "Local CLI Workers: Run Task" },
+      { "command": "localCliWorkers.cancelTask", "title": "Local CLI Workers: Cancel Active Task" },
+      { "command": "localCliWorkers.showWorkers", "title": "Local CLI Workers: Show Worker Status" },
+      { "command": "localCliWorkers.checkAuth", "title": "Local CLI Workers: Check CLI Authentication" },
+      { "command": "localCliWorkers.openWorkerTerminal", "title": "Local CLI Workers: Open Worker Terminal" }
+    ],
+    "configuration": {
+      "title": "Local CLI Workers",
+      "properties": {
+        "localCliWorkers.managerModel": { "type": "string", "default": "local manager", "description": "Label for the manager responsible for routing and reviewing worker tasks." },
+        "localCliWorkers.defaultWorker": { "type": "string", "enum": ["auto", "codex", "claude", "gemini"], "default": "auto" },
+        "localCliWorkers.codexCommand": { "type": "string", "default": "codex" },
+        "localCliWorkers.codexModel": { "type": "string", "default": "local Codex CLI" },
+        "localCliWorkers.claudeCommand": { "type": "string", "default": "claude" },
+        "localCliWorkers.claudeModel": { "type": "string", "default": "local Claude Code CLI" },
+        "localCliWorkers.geminiCommand": { "type": "string", "default": "gemini" },
+        "localCliWorkers.geminiModel": { "type": "string", "default": "local Gemini CLI" },
+        "localCliWorkers.maxConcurrentTasks": { "type": "number", "default": 1, "minimum": 1, "maximum": 8 },
+        "localCliWorkers.taskTimeoutMs": { "type": "number", "default": 600000, "minimum": 1000 },
+        "localCliWorkers.showWorkerTerminals": { "type": "boolean", "default": true },
+        "localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1 },
+        "localCliWorkers.usageThreshold": { "type": "number", "default": 20, "minimum": 1 }
+        ,"localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1, "maximum": 20 },
+        "localCliWorkers.usageThreshold": { "type": "number", "default": 20, "minimum": 1, "maximum": 10000 }
+      }
+    }
+  },
+  "scripts": { "compile": "tsc -p tsconfig.json", "watch": "tsc -w -p tsconfig.json", "test": "npm run compile && node --test dist/test/**/*.test.js", "package": "npm run compile" },
+  "devDependencies": { "@types/node": "^20.11.30", "@types/vscode": "^1.88.0", "typescript": "^5.4.5" },
+  "dependencies": {}
+}
