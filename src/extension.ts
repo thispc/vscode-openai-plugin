@@ -3,7 +3,7 @@ import { readConfig } from './config';
 import { createAdapters } from './adapters';
 import { say, newConversation } from './chat';
 import { ChatPanel } from './panel';
-import { readQuota, gearFor, planFor, describe as describeQuota } from './quota';
+import { readQuota, planFor, describe as describeQuota, short as shortQuota } from './quota';
 import { Conversation } from './models';
 import { WorkerAdapter, WorkerId, AgentTask, WorkerSelection } from './models';
 import { WorkerManager } from './manager';
@@ -43,7 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
   manager.quotaPlan = () => {
     const cfg = readConfig();
     if (!cfg.powerSaver) return undefined;
-    return planFor(gearFor(readQuota(), cfg.thresholds), cfg.thresholds);
+    return planFor(readQuota(), cfg.thresholds);
   };
   contextState = context.workspaceState;
   taskTree = new TaskTreeProvider(() => contextState.get<AgentTask[]>(tasksKey, []));
@@ -59,7 +59,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showWarningMessage(line);
   });
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  status.command = 'localCliWorkers.runTask'; status.text = '$(hubot) Workers'; status.tooltip = 'Run a local CLI worker task'; status.show();
+  status.command = 'localCliWorkers.showQuota';
+  status.show();
+  paintStatus();
+  const statusTimer = setInterval(paintStatus, 60_000);
+  context.subscriptions.push(new vscode.Disposable(() => clearInterval(statusTimer)));
   context.subscriptions.push(status, output,
     vscode.commands.registerCommand('localCliWorkers.chat',
       () => ChatPanel.show(context, manager, readConfig().modelIds as Record<string, string | undefined>, readConfig().taskTimeoutMs)),
@@ -67,6 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('localCliWorkers.newChat', newChat),
     vscode.commands.registerCommand('localCliWorkers.showQuota', () => {
       const cfg = readConfig();
+      paintStatus();
       const line = describeQuota(readQuota(), cfg.thresholds);
       output.appendLine(`\n${line}`);
       void vscode.window.showInformationMessage(line, 'Settings').then(a => {
@@ -108,12 +113,12 @@ async function runTask(resume?: AgentTask): Promise<void> {
     task.status = result.exitCode === 0 ? 'completed' : 'failed'; task.result = result; task.updatedAt = Date.now(); task.activity.push(`Exited ${result.exitCode ?? 'unknown'}`); await saveTask(task);
     const history = contextState.get<Array<{ prompt: string; worker: string; at: number }>>(historyKey, []);
     await contextState.update(historyKey, [...history.slice(-49), { prompt, worker: result.worker, at: Date.now() }]);
-    status.text = `$(hubot) ${result.worker}`;
+    paintStatus();
     if ((result.attempts?.length ?? 0) > 1) {
       output.appendLine(`\n>> Done by ${result.worker} after trying ${result.attempts!.join(' then ')}.`);
     }
     if (result.exitCode !== 0) vscode.window.showErrorMessage(`${result.worker} exited with code ${result.exitCode}`);
-  } catch (error) { task.status = /cancel/i.test(String(error)) ? 'cancelled' : 'failed'; task.error = String(error); task.updatedAt = Date.now(); task.activity.push(task.error); await saveTask(task); status.text = '$(hubot) Workers'; vscode.window.showErrorMessage(String(error)); }
+  } catch (error) { task.status = /cancel/i.test(String(error)) ? 'cancelled' : 'failed'; task.error = String(error); task.updatedAt = Date.now(); task.activity.push(task.error); await saveTask(task); paintStatus(); vscode.window.showErrorMessage(String(error)); }
 }
 const convKey = 'localCliWorkers.conversation';
 
@@ -149,6 +154,22 @@ async function newChat(): Promise<void> {
   await contextState.update(convKey, undefined);
   output.appendLine('\n-- new conversation --');
   vscode.window.showInformationMessage('Local CLI Workers: started a new conversation.');
+}
+
+/**
+ * The status bar shows the state, it does not ask for anything: how much of Claude's window is left and who
+ * would take the next turn. Clicking it explains, it does not prompt (Pulkit, 20 Sep 2026: "i dont wanna click
+ * and see a bar which asks me for a query coz i do that here now").
+ */
+function paintStatus(): void {
+  if (!status) return;
+  const cfg = readConfig();
+  const q = readQuota();
+  status.text = shortQuota(q, cfg.thresholds);
+  status.tooltip = new vscode.MarkdownString(
+    `**Local CLI Workers**\n\n${describeQuota(q, cfg.thresholds).replace(/\. /g, '.\n\n')}\n\n_Click for details and settings._`);
+  status.backgroundColor = (q.remaining ?? 100) <= cfg.thresholds.saverBelow
+    ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
 }
 
 async function saveTask(task: AgentTask): Promise<void> {

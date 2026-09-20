@@ -16,18 +16,27 @@ import { join } from 'node:path';
  */
 export type Gear = 'plenty' | 'normal' | 'saver' | 'unknown';
 
+/** One rung: with at least this much of the window left, this model is the one to use. */
+export interface Rung { atLeast: number; model: string; }
+
 export interface QuotaThresholds {
-  /** At or above this much left, use the best model. */
-  bestAbove: number;
-  /** At or below this much left, stop spending it and delegate. */
+  /** Richest model first. The first rung whose `atLeast` is met wins. */
+  ladder: Rung[];
+  /** At or below this much left, stop spending Claude and delegate instead. */
   saverBelow: number;
-  bestModel: string;
-  normalModel: string;
 }
 
+// Fable is the strongest, then Opus, then Sonnet; spending the best model on the last of a window is what
+// runs it out (Pulkit, 20 Sep 2026: "after fable opus is better no? why sonnet?").
 export const DEFAULT_THRESHOLDS: QuotaThresholds = {
-  bestAbove: 70, saverBelow: 30, bestModel: 'fable', normalModel: 'sonnet'
+  ladder: [{ atLeast: 70, model: 'fable' }, { atLeast: 50, model: 'opus' }, { atLeast: 30, model: 'sonnet' }],
+  saverBelow: 30
 };
+
+/** The rungs in order, richest first, ignoring any rung at or under the saver floor. */
+export function rungs(t: QuotaThresholds): Rung[] {
+  return [...t.ladder].sort((a, b) => b.atLeast - a.atLeast);
+}
 
 export interface Quota {
   /** Percent of the window still available, lowest of the windows that matter. */
@@ -69,21 +78,37 @@ export function readQuota(path = CACHE): Quota {
 export function gearFor(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): Gear {
   if (typeof q.remaining !== 'number') return 'unknown';
   if (q.remaining <= t.saverBelow) return 'saver';
-  if (q.remaining >= t.bestAbove) return 'plenty';
+  const top = rungs(t)[0];
+  if (top && q.remaining >= top.atLeast) return 'plenty';
   return 'normal';
 }
 
-/** The worker and model this gear implies. In saver the work goes elsewhere while the window refills. */
-export function planFor(gear: Gear, t: QuotaThresholds = DEFAULT_THRESHOLDS): { worker: 'claude' | 'codex'; model?: string } {
-  if (gear === 'saver') return { worker: 'codex' };
-  if (gear === 'plenty') return { worker: 'claude', model: t.bestModel };
-  return { worker: 'claude', model: t.normalModel };
+/**
+ * Who should take the next turn, and on which model.
+ *
+ * Below the saver floor the work goes to another provider. Above it, the richest rung whose threshold is met
+ * wins, so the model steps down as the window empties instead of burning the best one to the last drop.
+ */
+export function planFor(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): { worker: 'claude' | 'codex'; model?: string } {
+  if (typeof q.remaining !== 'number') return { worker: 'claude' };
+  if (q.remaining <= t.saverBelow) return { worker: 'codex' };
+  const hit = rungs(t).find(r => q.remaining! >= r.atLeast);
+  return { worker: 'claude', model: hit?.model ?? rungs(t).at(-1)?.model };
+}
+
+/** A few characters for the status bar: how much is left and who would take the next turn. */
+export function short(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): string {
+  if (typeof q.remaining !== 'number') return '$(question) Claude ?';
+  const plan = planFor(q, t);
+  const icon = plan.worker === 'codex' ? '$(arrow-swap)' : q.remaining >= (rungs(t)[0]?.atLeast ?? 70) ? '$(zap)' : '$(pulse)';
+  const who = plan.worker === 'codex' ? 'codex' : plan.model ?? 'claude';
+  return `${icon} ${q.remaining}% ${who}`;
 }
 
 export function describe(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): string {
   if (q.error) return `Claude usage unknown: ${q.error}`;
   const gear = gearFor(q, t);
-  const plan = planFor(gear, t);
+  const plan = planFor(q, t);
   const back = q.resetsAt ? new Date(q.resetsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'unknown';
   const stale = (q.ageMinutes ?? 0) > 30 ? ` (figure is ${Math.round(q.ageMinutes!)} min old)` : '';
   const where = plan.worker === 'codex' ? 'codex, to save the rest' : `claude (${plan.model})`;

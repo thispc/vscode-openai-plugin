@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { WorkerId, WorkerSelection, WorkerProfile } from './models';
+import { QuotaThresholds, DEFAULT_THRESHOLDS } from './quota';
 
 export interface WorkerConfig {
   managerModel: string;
@@ -14,7 +15,7 @@ export interface WorkerConfig {
   limitedCooldownMs: number;
   modelIds: Partial<Record<WorkerId, string>>;
   powerSaver: boolean;
-  thresholds: { bestAbove: number; saverBelow: number; bestModel: string; normalModel: string };
+  thresholds: QuotaThresholds;
   profiles: Record<WorkerId, WorkerProfile>;
 }
 
@@ -34,10 +35,8 @@ export function readConfig(): WorkerConfig {
     },
     powerSaver: c.get<boolean>('powerSaver.enabled', true),
     thresholds: {
-      bestAbove: c.get<number>('powerSaver.bestAbovePercent', 70),
-      saverBelow: c.get<number>('powerSaver.saverBelowPercent', 30),
-      bestModel: c.get<string>('powerSaver.bestModel', 'fable'),
-      normalModel: c.get<string>('powerSaver.normalModel', 'sonnet')
+      ladder: c.get<Array<{ atLeast: number; model: string }>>('powerSaver.ladder', DEFAULT_THRESHOLDS.ladder),
+      saverBelow: c.get<number>('powerSaver.saverBelowPercent', 30)
     },
     limitedCooldownMs: c.get<number>('limitedCooldownMs', 1800000),
     maxConcurrentTasks: c.get<number>('maxConcurrentTasks', 1),

@@ -191,13 +191,6 @@
 					"default": true,
 					"description": "Pick the worker and model from how much of Claude's window is left, read from ~/.claude/usage-cache.json."
 				},
-				"localCliWorkers.powerSaver.bestAbovePercent": {
-					"type": "number",
-					"default": 70,
-					"minimum": 0,
-					"maximum": 100,
-					"description": "With at least this much of Claude's window left, use the best model."
-				},
 				"localCliWorkers.powerSaver.saverBelowPercent": {
 					"type": "number",
 					"default": 30,
@@ -205,15 +198,42 @@
 					"maximum": 100,
 					"description": "With this much or less left, send the work to codex and save the rest of Claude's window."
 				},
-				"localCliWorkers.powerSaver.bestModel": {
-					"type": "string",
-					"default": "fable",
-					"description": "Model to use when there is plenty left."
-				},
-				"localCliWorkers.powerSaver.normalModel": {
-					"type": "string",
-					"default": "sonnet",
-					"description": "Model to use in between."
+				"localCliWorkers.powerSaver.ladder": {
+					"type": "array",
+					"default": [
+						{
+							"atLeast": 70,
+							"model": "fable"
+						},
+						{
+							"atLeast": 50,
+							"model": "opus"
+						},
+						{
+							"atLeast": 30,
+							"model": "sonnet"
+						}
+					],
+					"description": "Which Claude model to use at how much of the window left, richest first. The first rung whose atLeast is met wins.",
+					"items": {
+						"type": "object",
+						"required": [
+							"atLeast",
+							"model"
+						],
+						"properties": {
+							"atLeast": {
+								"type": "number",
+								"minimum": 0,
+								"maximum": 100,
+								"description": "Percent of the window still left."
+							},
+							"model": {
+								"type": "string",
+								"description": "Model to pass to claude --model, e.g. fable, opus, sonnet, haiku."
+							}
+						}
+					}
 				}
 			}
 		}

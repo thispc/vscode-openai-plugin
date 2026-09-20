@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readQuota, gearFor, planFor, describe as describeQuota, DEFAULT_THRESHOLDS } from '../quota';
+import { readQuota, gearFor, planFor, describe as describeQuota, short, DEFAULT_THRESHOLDS } from '../quota';
 
 function cacheWith(fiveUsed: number, weekUsed: number, fetchedAt = Date.now()): string {
   const dir = mkdtempSync(join(tmpdir(), 'q-'));
@@ -13,6 +13,7 @@ function cacheWith(fiveUsed: number, weekUsed: number, fetchedAt = Date.now()): 
     seven_day: { utilization: weekUsed, resets_at: '2026-09-24T20:00:00.000Z' } } }));
   return p;
 }
+const left = (pct: number) => readQuota(cacheWith(100 - pct, 0));
 
 test('the window that runs out first is the one that decides', () => {
   const q = readQuota(cacheWith(72, 9));
@@ -21,38 +22,55 @@ test('the window that runs out first is the one that decides', () => {
   assert.equal(q.remaining, 28, 'plenty of weekly left does not matter when the session is nearly spent');
 });
 
-test('the gears fall where the thresholds say', () => {
-  assert.equal(gearFor(readQuota(cacheWith(10, 5))), 'plenty');   // 90 left
-  assert.equal(gearFor(readQuota(cacheWith(50, 5))), 'normal');   // 50 left
-  assert.equal(gearFor(readQuota(cacheWith(72, 9))), 'saver');    // 28 left
-  assert.equal(gearFor(readQuota(cacheWith(70, 5))), 'saver', '30 left is at the line, so it saves');
-  assert.equal(gearFor(readQuota(cacheWith(30, 5))), 'plenty', '70 left is at the line, so it splurges');
+test('the model steps down the ladder as the window empties', () => {
+  assert.equal(planFor(left(90)).model, 'fable', 'the best model while there is room for it');
+  assert.equal(planFor(left(70)).model, 'fable', '70 is the rung, so it still counts');
+  assert.equal(planFor(left(69)).model, 'opus', 'below the top rung, opus, not straight to sonnet');
+  assert.equal(planFor(left(50)).model, 'opus');
+  assert.equal(planFor(left(49)).model, 'sonnet');
+  assert.equal(planFor(left(31)).model, 'sonnet');
 });
 
-test('saver sends the work away instead of spending the rest', () => {
-  assert.deepEqual(planFor('saver'), { worker: 'codex' });
-  assert.deepEqual(planFor('plenty'), { worker: 'claude', model: 'fable' });
-  assert.deepEqual(planFor('normal'), { worker: 'claude', model: 'sonnet' });
+test('under the floor the work leaves Claude entirely', () => {
+  assert.deepEqual(planFor(left(30)), { worker: 'codex' }, '30 left is at the floor, so it saves');
+  assert.deepEqual(planFor(left(5)), { worker: 'codex' });
+  assert.equal(planFor(left(31)).worker, 'claude');
 });
 
-test('the thresholds and the models are all settable', () => {
-  const mine = { bestAbove: 90, saverBelow: 50, bestModel: 'opus', normalModel: 'haiku' };
-  assert.equal(gearFor(readQuota(cacheWith(20, 5)), mine), 'normal', '80 left is no longer plenty at 90');
-  assert.equal(gearFor(readQuota(cacheWith(55, 5)), mine), 'saver', '45 left is already saving at 50');
-  assert.deepEqual(planFor('plenty', mine), { worker: 'claude', model: 'opus' });
+test('the ladder is whatever the settings say', () => {
+  const mine = { saverBelow: 50, ladder: [{ atLeast: 95, model: 'opus' }, { atLeast: 60, model: 'haiku' }] };
+  assert.equal(planFor(left(96), mine).model, 'opus');
+  assert.equal(planFor(left(70), mine).model, 'haiku');
+  assert.equal(planFor(left(45), mine).worker, 'codex', 'a floor of 50 saves earlier');
+  assert.equal(gearFor(left(96), mine), 'plenty');
+  assert.equal(gearFor(left(70), mine), 'normal');
+});
+
+test('rungs out of order still rank richest first', () => {
+  const jumbled = { saverBelow: 20, ladder: [{ atLeast: 40, model: 'sonnet' }, { atLeast: 90, model: 'fable' }] };
+  assert.equal(planFor(left(95), jumbled).model, 'fable');
+  assert.equal(planFor(left(50), jumbled).model, 'sonnet');
 });
 
 test('an unreadable or missing cache does not pick a gear', () => {
   const q = readQuota(join(tmpdir(), 'definitely-not-here.json'));
   assert.match(q.error ?? '', /no usage cache/);
   assert.equal(gearFor(q), 'unknown');
+  assert.equal(planFor(q).worker, 'claude', 'not knowing is not a reason to delegate');
   assert.match(describeQuota(q), /usage unknown/);
+  assert.match(short(q), /Claude \?/);
 });
 
 test('a stale figure is said to be stale rather than trusted quietly', () => {
   const old = readQuota(cacheWith(72, 9, Date.now() - 90 * 60000));
   assert.match(describeQuota(old), /90 min old/);
-  const fresh = readQuota(cacheWith(72, 9));
-  assert.ok(!/min old/.test(describeQuota(fresh)));
-  assert.match(describeQuota(fresh, DEFAULT_THRESHOLDS), /Gear: saver → codex/);
+  assert.ok(!/min old/.test(describeQuota(readQuota(cacheWith(72, 9)))));
+});
+
+test('the status bar says the state, in a few characters', () => {
+  assert.match(short(left(90)), /90% fable/);
+  assert.match(short(left(55)), /55% opus/);
+  assert.match(short(left(25)), /25% codex/);
+  assert.ok(!/\?/.test(short(left(25))), 'a known figure never renders as a question mark');
+  assert.match(describeQuota(left(25), DEFAULT_THRESHOLDS), /Gear: saver/);
 });
