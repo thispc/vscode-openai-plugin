@@ -1,4 +1,4 @@
-export type WorkerId = 'codex' | 'claude' | 'gemini';
+export type WorkerId = 'codex' | 'claude';
 export type WorkerSelection = WorkerId | 'auto';
 export type UsageConfidence = 'known' | 'estimated' | 'unknown';
 
@@ -29,6 +29,10 @@ export interface TaskResult {
   output: string;
   durationMs: number;
   attempts?: WorkerId[];
+  /** The subscription's window is spent. Different from a failed task: this one comes back on its own. */
+  rateLimited?: boolean;
+  /** When the window is expected to reset, when the CLI said so. */
+  resetAt?: number;
 }
 
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -55,6 +59,8 @@ export interface UsageSnapshot {
   usage: { state: UsageConfidence; completedEstimate?: number };
   usageThresholdReached: boolean;
   available: boolean;
+  /** Set when the CLI itself reported the window spent; the worker is skipped until it passes. */
+  limitedUntil?: number;
 }
 
 export interface WorkerAdapter {

@@ -1,4 +1,4 @@
-import { TaskRequest, TaskResult, WorkerAdapter, WorkerId, UsageSnapshot, TaskHandle, StreamChunk, WorkerSelection, AgentTask } from './models';
+import { TaskRequest, TaskResult, WorkerAdapter, WorkerId, UsageSnapshot, TaskHandle, StreamChunk, WorkerSelection } from './models';
 import { EventEmitter } from 'node:events';
 
 export class WorkerManager {
@@ -6,22 +6,41 @@ export class WorkerManager {
   private readonly usage = new Map<WorkerId, UsageSnapshot>();
   private active = new Map<number, { worker: WorkerId; handle: TaskHandle }>();
   private nextId = 1;
-  constructor(private readonly adapters: Record<WorkerId, WorkerAdapter>, private readonly maxConcurrent = 1, private readonly failureThreshold = 3, private readonly usageThreshold = 20) {
+  constructor(private readonly adapters: Record<WorkerId, WorkerAdapter>, private readonly maxConcurrent = 1,
+              private readonly failureThreshold = 3, private readonly usageThreshold = 0,
+              /** How long to rest a worker whose CLI reported a limit without naming a reset time. */
+              private readonly limitedCooldownMs = 30 * 60_000) {
     for (const id of Object.keys(adapters) as WorkerId[]) this.usage.set(id, { worker: id, running: 0, completed: 0, failures: 0, usage: { state: 'unknown' }, usageThresholdReached: false, available: true });
   }
   snapshots(): UsageSnapshot[] { return [...this.usage.values()].map(s => ({ ...s })); }
   cancelActive(): void { for (const task of this.active.values()) task.handle.cancel(); }
   cancelTask(taskId: number): void { this.active.get(taskId)?.handle.cancel(); }
   activeTasks(): number { return this.active.size; }
+  /** A worker the CLI reported as out of quota, until its window is up. */
+  private limited(s: UsageSnapshot, now = Date.now()): boolean {
+    if (!s.limitedUntil) return false;
+    if (s.limitedUntil > now) return true;
+    s.limitedUntil = undefined;          // the window passed: let it back in
+    s.usageThresholdReached = false;
+    return false;
+  }
+
   private choose(selection: WorkerSelection = 'auto', excluded: WorkerId[] = []): WorkerId {
     if (selection !== 'auto') return selection;
+    const now = Date.now();
     const candidates = [...this.usage.values()].filter(s =>
       s.available &&
       s.failures < this.failureThreshold &&
-      !s.usageThresholdReached &&
+      !this.limited(s, now) &&
+      !(this.usageThreshold > 0 && s.completed >= this.usageThreshold) &&
       !excluded.includes(s.worker)
     );
-    if (!candidates.length) throw new Error('No healthy workers are available.');
+    if (!candidates.length) {
+      const next = Math.min(...[...this.usage.values()].map(s => s.limitedUntil ?? Infinity));
+      throw new Error(Number.isFinite(next)
+        ? `Every worker is out of quota. The first comes back at ${new Date(next).toLocaleTimeString()}.`
+        : 'No healthy workers are available.');
+    }
     return candidates.sort((a, b) => (a.running - b.running) || (a.failures - b.failures) || ((a.lastUsed ?? 0) - (b.lastUsed ?? 0)))[0].worker;
   }
   run(request: TaskRequest, onChunk: (chunk: StreamChunk) => void): Promise<TaskResult> {
@@ -39,8 +58,15 @@ export class WorkerManager {
       return handle.promise.then(result => {
         stats.running--; stats.completed++; stats.lastUsed = Date.now();
         stats.usage = { state: 'estimated', completedEstimate: stats.completed };
-        stats.usageThresholdReached = stats.completed >= this.usageThreshold;
-        if (result.exitCode !== 0) { stats.failures++; stats.available = stats.failures < this.failureThreshold; }
+        stats.usageThresholdReached = this.usageThreshold > 0 && stats.completed >= this.usageThreshold;
+        if (result.rateLimited) {
+          // the subscription's window is spent, which says nothing about this worker's health
+          stats.limitedUntil = result.resetAt ?? Date.now() + this.limitedCooldownMs;
+          stats.usageThresholdReached = true;
+          this.events.emit('limited', { worker, until: stats.limitedUntil });
+        } else if (result.exitCode !== 0) {
+          stats.failures++; stats.available = stats.failures < this.failureThreshold;
+        }
         this.active.delete(taskId);
         this.events.emit('finished', { taskId, result });
         if (result.exitCode !== 0 && index + 1 < candidates.length) return attempt(index + 1);

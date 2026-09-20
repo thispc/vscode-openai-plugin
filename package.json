@@ -1,61 +1,188 @@
 {
-  "name": "local-cli-workers",
-  "displayName": "Local CLI Workers",
-  "description": "Route VS Code tasks to locally installed Codex, Claude Code, or Gemini CLI workers.",
-  "version": "0.1.0",
-  "publisher": "local-cli-workers",
-  "license": "MIT",
-  "repository": "https://github.com/thispc/vscode-openai-plugin",
-  "engines": { "vscode": "^1.88.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "commands": [
-      { "command": "localCliWorkers.runTask", "title": "Local CLI Workers: Run Task" },
-      { "command": "localCliWorkers.cancelTask", "title": "Local CLI Workers: Cancel Active Task" },
-      { "command": "localCliWorkers.showWorkers", "title": "Local CLI Workers: Show Worker Status" },
-      { "command": "localCliWorkers.checkAuth", "title": "Local CLI Workers: Check CLI Authentication" },
-      { "command": "localCliWorkers.openWorkerTerminal", "title": "Local CLI Workers: Open Worker Terminal" }
-      ,{ "command": "localCliWorkers.resumeTask", "title": "Local CLI Workers: Resume Task" }
-      ,{ "command": "localCliWorkers.clearHistory", "title": "Local CLI Workers: Clear Task History" }
-    ],
-    "views": {
-      "localCliWorkers": [
-        { "id": "localCliWorkers.tasks", "name": "Agent Tasks", "when": "workspaceFolderCount > 0", "icon": "$(hubot)" }
-      ]
-    },
-    "menus": {
-      "view/title": [
-        { "command": "localCliWorkers.runTask", "when": "view == localCliWorkers.tasks", "group": "navigation" },
-        { "command": "localCliWorkers.clearHistory", "when": "view == localCliWorkers.tasks", "group": "navigation" }
-      ],
-      "view/item/context": [
-        { "command": "localCliWorkers.cancelTask", "when": "view == localCliWorkers.tasks && viewItem == runningTask", "group": "inline" },
-        { "command": "localCliWorkers.resumeTask", "when": "view == localCliWorkers.tasks && viewItem == task", "group": "inline" }
-      ]
-    },
-    "configuration": {
-      "title": "Local CLI Workers",
-      "properties": {
-        "localCliWorkers.managerModel": { "type": "string", "default": "local manager", "description": "Label for the manager responsible for routing and reviewing worker tasks." },
-        "localCliWorkers.defaultWorker": { "type": "string", "enum": ["auto", "codex", "claude", "gemini"], "default": "auto" },
-        "localCliWorkers.codexCommand": { "type": "string", "default": "codex" },
-        "localCliWorkers.codexModel": { "type": "string", "default": "local Codex CLI" },
-        "localCliWorkers.claudeCommand": { "type": "string", "default": "claude" },
-        "localCliWorkers.claudeModel": { "type": "string", "default": "local Claude Code CLI" },
-        "localCliWorkers.geminiCommand": { "type": "string", "default": "gemini" },
-        "localCliWorkers.geminiModel": { "type": "string", "default": "local Gemini CLI" },
-        "localCliWorkers.maxConcurrentTasks": { "type": "number", "default": 1, "minimum": 1, "maximum": 8 },
-        "localCliWorkers.taskTimeoutMs": { "type": "number", "default": 600000, "minimum": 1000 },
-        "localCliWorkers.showWorkerTerminals": { "type": "boolean", "default": true },
-        "localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1 },
-        "localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1, "maximum": 20 },
-        "localCliWorkers.usageThreshold": { "type": "number", "default": 20, "minimum": 1, "maximum": 10000 }
-      }
-    }
-  },
-  "scripts": { "compile": "tsc -p tsconfig.json", "watch": "tsc -w -p tsconfig.json", "test": "npm run compile && node --test dist/test/**/*.test.js", "package": "npm run compile && vsce package --no-dependencies" },
-  "devDependencies": { "@types/node": "^20.11.30", "@types/vscode": "^1.88.0", "typescript": "^5.4.5" },
-  "dependencies": {}
+	"name": "local-cli-workers",
+	"displayName": "Local CLI Workers",
+	"description": "Route VS Code tasks to the locally installed Codex and Claude Code CLIs, each signed in with its own subscription.",
+	"version": "0.1.0",
+	"publisher": "local-cli-workers",
+	"license": "MIT",
+	"repository": "https://github.com/thispc/vscode-openai-plugin",
+	"engines": {
+		"vscode": "^1.88.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./dist/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "localCliWorkers.runTask",
+				"title": "Local CLI Workers: Run Task"
+			},
+			{
+				"command": "localCliWorkers.cancelTask",
+				"title": "Local CLI Workers: Cancel Active Task"
+			},
+			{
+				"command": "localCliWorkers.showWorkers",
+				"title": "Local CLI Workers: Show Worker Status"
+			},
+			{
+				"command": "localCliWorkers.checkAuth",
+				"title": "Local CLI Workers: Check CLI Authentication"
+			},
+			{
+				"command": "localCliWorkers.openWorkerTerminal",
+				"title": "Local CLI Workers: Open Worker Terminal"
+			},
+			{
+				"command": "localCliWorkers.resumeTask",
+				"title": "Local CLI Workers: Resume Task"
+			},
+			{
+				"command": "localCliWorkers.clearHistory",
+				"title": "Local CLI Workers: Clear Task History"
+			}
+		],
+		"views": {
+			"localCliWorkers": [
+				{
+					"id": "localCliWorkers.tasks",
+					"name": "Agent Tasks",
+					"when": "workspaceFolderCount > 0",
+					"icon": "$(hubot)"
+				}
+			]
+		},
+		"menus": {
+			"view/title": [
+				{
+					"command": "localCliWorkers.runTask",
+					"when": "view == localCliWorkers.tasks",
+					"group": "navigation"
+				},
+				{
+					"command": "localCliWorkers.clearHistory",
+					"when": "view == localCliWorkers.tasks",
+					"group": "navigation"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "localCliWorkers.cancelTask",
+					"when": "view == localCliWorkers.tasks && viewItem == runningTask",
+					"group": "inline"
+				},
+				{
+					"command": "localCliWorkers.resumeTask",
+					"when": "view == localCliWorkers.tasks && viewItem == task",
+					"group": "inline"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Local CLI Workers",
+			"properties": {
+				"localCliWorkers.managerModel": {
+					"type": "string",
+					"default": "local manager",
+					"description": "Label for the manager responsible for routing and reviewing worker tasks."
+				},
+				"localCliWorkers.defaultWorker": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"codex",
+						"claude"
+					],
+					"default": "auto"
+				},
+				"localCliWorkers.codexCommand": {
+					"type": "string",
+					"default": "codex"
+				},
+				"localCliWorkers.codexModel": {
+					"type": "string",
+					"default": "local Codex CLI"
+				},
+				"localCliWorkers.claudeCommand": {
+					"type": "string",
+					"default": "claude"
+				},
+				"localCliWorkers.claudeModel": {
+					"type": "string",
+					"default": "local Claude Code CLI"
+				},
+				"localCliWorkers.maxConcurrentTasks": {
+					"type": "number",
+					"default": 1,
+					"minimum": 1,
+					"maximum": 8
+				},
+				"localCliWorkers.taskTimeoutMs": {
+					"type": "number",
+					"default": 600000,
+					"minimum": 1000
+				},
+				"localCliWorkers.showWorkerTerminals": {
+					"type": "boolean",
+					"default": true
+				},
+				"localCliWorkers.failureThreshold": {
+					"type": "number",
+					"default": 3,
+					"minimum": 1,
+					"maximum": 20
+				},
+				"localCliWorkers.usageThreshold": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 10000,
+					"description": "Optional hard cap on completed tasks per worker per session. 0 means off; real limits come from what each CLI reports."
+				},
+				"localCliWorkers.codexSandbox": {
+					"type": "string",
+					"enum": [
+						"read-only",
+						"workspace-write",
+						"danger-full-access"
+					],
+					"default": "read-only",
+					"description": "Sandbox codex exec runs under. read-only suits reviews; workspace-write lets it edit files."
+				},
+				"localCliWorkers.limitedCooldownMs": {
+					"type": "number",
+					"default": 1800000,
+					"minimum": 60000,
+					"description": "How long to rest a worker whose CLI reported a usage limit without naming a reset time."
+				},
+				"localCliWorkers.claudeModelId": {
+					"type": "string",
+					"default": "sonnet",
+					"description": "Model passed to claude --model. Leave empty for the CLI default, which on a Pro plan can answer 'requires usage credits'."
+				},
+				"localCliWorkers.codexModelId": {
+					"type": "string",
+					"default": "",
+					"description": "Model passed to codex -m. Empty uses the Codex default for your ChatGPT plan."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "tsc -p tsconfig.json",
+		"watch": "tsc -w -p tsconfig.json",
+		"test": "npm run compile && node --test dist/test/**/*.test.js",
+		"package": "npm run compile && vsce package --no-dependencies"
+	},
+	"devDependencies": {
+		"@types/node": "^20.11.30",
+		"@types/vscode": "^1.88.0",
+		"typescript": "^5.4.5"
+	},
+	"dependencies": {}
 }

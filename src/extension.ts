@@ -34,8 +34,8 @@ class TaskTreeProvider implements vscode.TreeDataProvider<TaskItem> {
 
 export function activate(context: vscode.ExtensionContext): void {
   const config = readConfig();
-  adapters = createAdapters(config.commands);
-  manager = new WorkerManager(adapters, config.maxConcurrentTasks, config.failureThreshold, config.usageThreshold);
+  adapters = createAdapters(config.commands, config.codexSandbox, config.modelIds);
+  manager = new WorkerManager(adapters, config.maxConcurrentTasks, config.failureThreshold, config.usageThreshold, config.limitedCooldownMs);
   contextState = context.workspaceState;
   taskTree = new TaskTreeProvider(() => contextState.get<AgentTask[]>(tasksKey, []));
   output = vscode.window.createOutputChannel('Local CLI Workers');
@@ -60,7 +60,7 @@ async function runTask(resume?: AgentTask): Promise<void> {
   const profiles = readConfig().profiles;
   const worker = resume ? { value: resume.worker } : await vscode.window.showQuickPick([
     { label: 'Auto', description: 'Usage-aware routing', value: 'auto' as WorkerSelection },
-    ...(['codex', 'claude', 'gemini'] as WorkerId[]).map(id => ({ label: profiles[id].label, description: profiles[id].modelLabel, value: id as WorkerSelection }))
+    ...(['codex', 'claude'] as WorkerId[]).map(id => ({ label: profiles[id].label, description: profiles[id].modelLabel, value: id as WorkerSelection }))
   ], { placeHolder: 'Select worker (manual override)' });
   if (!worker) return;
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? editor?.document.uri.fsPath ?? process.cwd();
@@ -92,7 +92,7 @@ async function showWorkers(): Promise<void> {
   await vscode.window.showQuickPick(items, { placeHolder: 'Worker usage' });
 }
 async function openWorkerTerminal(): Promise<void> {
-  const worker = await vscode.window.showQuickPick(['codex', 'claude', 'gemini'], { placeHolder: 'Open visible terminal for worker' });
+  const worker = await vscode.window.showQuickPick(['codex', 'claude'], { placeHolder: 'Open visible terminal for worker' });
   if (!worker) return;
   const existing = terminals.get(worker as WorkerId);
   if (existing) { existing.show(); return; }

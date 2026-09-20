@@ -1,8 +1,35 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { WorkerAdapter, WorkerId, TaskRequest, TaskHandle, TaskResult, StreamChunk, AuthStatus } from './models';
 
+/** What each CLI says when the subscription's window is spent, rather than when the task itself went wrong. */
+const RATE_LIMITED = /rate.?limit|usage limit|quota|too many requests|429|limit reached|upgrade to|try again (later|in)|resets? (at|in)|requires usage credits|out of credits|insufficient credits/i;
+
+/** A reset time in the message ("resets at 3pm", "try again in 42 minutes"), as epoch ms, when one is given. */
+export function parseResetAt(text: string, now = Date.now()): number | undefined {
+  const mins = text.match(/(?:try again in|resets? in)\s+(?:about\s+)?(\d+)\s*(minute|min|hour|hr)/i);
+  if (mins) {
+    const n = Number(mins[1]);
+    return now + n * (/^h/i.test(mins[2]) ? 3_600_000 : 60_000);
+  }
+  const at = text.match(/resets? at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (at) {
+    const d = new Date(now);
+    let h = Number(at[1]);
+    if (/pm/i.test(at[3] ?? '') && h < 12) h += 12;
+    if (/am/i.test(at[3] ?? '') && h === 12) h = 0;
+    d.setHours(h, Number(at[2] ?? 0), 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+  return undefined;
+}
+
+export function isRateLimited(output: string, exitCode: number | null): boolean {
+  return exitCode !== 0 && RATE_LIMITED.test(output);
+}
+
 export class LocalCliAdapter implements WorkerAdapter {
-  constructor(public readonly id: WorkerId, private readonly command: string) {}
+  constructor(public readonly id: WorkerId, private readonly command: string, protected readonly model?: string) {}
 
   run(request: TaskRequest, onChunk: (chunk: StreamChunk) => void): TaskHandle {
     const started = Date.now();
@@ -14,8 +41,10 @@ export class LocalCliAdapter implements WorkerAdapter {
       rejectTask = reject;
       try {
         // Prompt is passed as an argument, never through a shell, to avoid injection.
+        // stdin must be closed, not inherited: spawned without a tty both CLIs sit waiting for piped input
+        // ("no stdin data received in 3s") and the prompt in argv is never run.
         child = spawn(this.command, this.argumentsFor(request.prompt), {
-          cwd: request.cwd, shell: false, env: { ...process.env }
+          cwd: request.cwd, shell: false, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe']
         });
       } catch (error) {
         reject(new Error(`Unable to start ${this.id}: ${String(error)}`)); return;
@@ -32,7 +61,10 @@ export class LocalCliAdapter implements WorkerAdapter {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
-        resolve({ worker: this.id, exitCode: code, output: output.join(''), durationMs: Date.now() - started });
+        const text = output.join('');
+        const limited = isRateLimited(text, code);
+        resolve({ worker: this.id, exitCode: code, output: text, durationMs: Date.now() - started,
+                  rateLimited: limited, resetAt: limited ? parseResetAt(text) : undefined });
       });
       if (request.timeoutMs) {
         timer = setTimeout(() => {
@@ -58,7 +90,7 @@ export class LocalCliAdapter implements WorkerAdapter {
 
   async checkAuth(cwd: string): Promise<AuthStatus> {
     return new Promise(resolve => {
-      const probe = spawn(this.command, this.authArguments(), { cwd, shell: false, env: { ...process.env } });
+      const probe = spawn(this.command, this.authArguments(), { cwd, shell: false, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
       probe.stderr?.on('data', d => { stderr += d.toString(); });
       probe.once('error', e => resolve({ authenticated: false, detail: `${this.id} unavailable: ${e.message}` }));
@@ -71,19 +103,26 @@ export class LocalCliAdapter implements WorkerAdapter {
 }
 
 export class CodexAdapter extends LocalCliAdapter {
-  constructor(command: string) { super('codex', command); }
-  protected argumentsFor(prompt: string): string[] { return ['exec', '--', prompt]; }
+  constructor(command: string, private readonly sandbox = 'read-only', model?: string) { super('codex', command, model); }
+  // `exec -- <prompt>` makes codex wait on stdin instead of reading the prompt, and it refuses to run outside
+  // a trusted git repo. The prompt is positional, and the sandbox is stated so nothing waits for approval.
+  protected argumentsFor(prompt: string): string[] {
+    return ['exec', '--sandbox', this.sandbox, '--skip-git-repo-check',
+            ...(this.model ? ['-m', this.model] : []), prompt];
+  }
   protected authArguments(): string[] { return ['login', 'status']; }
 }
 export class ClaudeAdapter extends LocalCliAdapter {
-  constructor(command: string) { super('claude', command); }
-  protected argumentsFor(prompt: string): string[] { return ['-p', prompt]; }
-}
-export class GeminiAdapter extends LocalCliAdapter {
-  constructor(command: string) { super('gemini', command); }
-  protected argumentsFor(prompt: string): string[] { return ['-p', prompt]; }
+  constructor(command: string, model?: string) { super('claude', command, model); }
+  // without --model the CLI picks its default, which on a Pro plan answers "requires usage credits"
+  protected argumentsFor(prompt: string): string[] {
+    return [...(this.model ? ['--model', this.model] : []), '-p', prompt];
+  }
+  protected authArguments(): string[] { return ['auth', 'status']; }
 }
 
-export function createAdapters(commands: Record<WorkerId, string>): Record<WorkerId, WorkerAdapter> {
-  return { codex: new CodexAdapter(commands.codex), claude: new ClaudeAdapter(commands.claude), gemini: new GeminiAdapter(commands.gemini) };
+export function createAdapters(commands: Record<WorkerId, string>, codexSandbox = 'read-only',
+                               models: Partial<Record<WorkerId, string>> = {}): Record<WorkerId, WorkerAdapter> {
+  return { codex: new CodexAdapter(commands.codex, codexSandbox, models.codex),
+           claude: new ClaudeAdapter(commands.claude, models.claude) };
 }
