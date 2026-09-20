@@ -58,7 +58,7 @@ test('an unreadable or missing cache does not pick a gear', () => {
   assert.equal(gearFor(q), 'unknown');
   assert.equal(planFor(q).worker, 'claude', 'not knowing is not a reason to delegate');
   assert.match(describeQuota(q), /usage unknown/);
-  assert.match(short(q), /Claude \?/);
+  assert.match(short(q), /usage unknown/);
 });
 
 test('a stale figure is said to be stale rather than trusted quietly', () => {
@@ -67,10 +67,11 @@ test('a stale figure is said to be stale rather than trusted quietly', () => {
   assert.ok(!/min old/.test(describeQuota(readQuota(cacheWith(72, 9)))));
 });
 
-test('the status bar says the state, in a few characters', () => {
-  assert.match(short(left(90)), /90% fable/);
-  assert.match(short(left(55)), /55% opus/);
-  assert.match(short(left(25)), /25% codex/);
-  assert.ok(!/\?/.test(short(left(25))), 'a known figure never renders as a question mark');
+test('the status bar names whose percentage it is', () => {
+  // "17% codex" read as codex being at 17%; the number is always Claude's
+  assert.match(short(left(90)), /Claude 90% → fable/);
+  assert.match(short(left(55)), /Claude 55% → opus/);
+  assert.match(short(left(25)), /Claude 25% → codex/);
+  assert.ok(!/^\S*\s*\d+% codex/.test(short(left(25))), 'the percentage is never left attached to codex');
   assert.match(describeQuota(left(25), DEFAULT_THRESHOLDS), /Gear: saver/);
 });

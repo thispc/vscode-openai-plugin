@@ -96,13 +96,18 @@ export function planFor(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): { wo
   return { worker: 'claude', model: hit?.model ?? rungs(t).at(-1)?.model };
 }
 
-/** A few characters for the status bar: how much is left and who would take the next turn. */
+/**
+ * A few characters for the status bar.
+ *
+ * "17% codex" read as if codex were at 17% (Pulkit, 20 Sep 2026). The percentage is Claude's, and the arrow
+ * says where the work goes, so both halves have to be named.
+ */
 export function short(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): string {
-  if (typeof q.remaining !== 'number') return '$(question) Claude ?';
+  if (typeof q.remaining !== 'number') return '$(question) Claude usage unknown';
   const plan = planFor(q, t);
   const icon = plan.worker === 'codex' ? '$(arrow-swap)' : q.remaining >= (rungs(t)[0]?.atLeast ?? 70) ? '$(zap)' : '$(pulse)';
   const who = plan.worker === 'codex' ? 'codex' : plan.model ?? 'claude';
-  return `${icon} ${q.remaining}% ${who}`;
+  return `${icon} Claude ${q.remaining}% \u2192 ${who}`;
 }
 
 export function describe(q: Quota, t: QuotaThresholds = DEFAULT_THRESHOLDS): string {
