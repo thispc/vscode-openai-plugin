@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { readConfig } from './config';
 import { createAdapters } from './adapters';
+import { say, newConversation } from './chat';
+import { Conversation } from './models';
 import { WorkerAdapter, WorkerId, AgentTask, WorkerSelection } from './models';
 import { WorkerManager } from './manager';
 
@@ -51,7 +53,9 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'localCliWorkers.runTask'; status.text = '$(hubot) Workers'; status.tooltip = 'Run a local CLI worker task'; status.show();
-  context.subscriptions.push(status, output);
+  context.subscriptions.push(status, output,
+    vscode.commands.registerCommand('localCliWorkers.chat', chat),
+    vscode.commands.registerCommand('localCliWorkers.newChat', newChat));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('localCliWorkers.tasks', taskTree));
   context.subscriptions.push(vscode.commands.registerCommand('localCliWorkers.runTask', runTask));
   context.subscriptions.push(vscode.commands.registerCommand('localCliWorkers.cancelTask', () => manager.cancelActive()));
@@ -94,6 +98,42 @@ async function runTask(resume?: AgentTask): Promise<void> {
     if (result.exitCode !== 0) vscode.window.showErrorMessage(`${result.worker} exited with code ${result.exitCode}`);
   } catch (error) { task.status = /cancel/i.test(String(error)) ? 'cancelled' : 'failed'; task.error = String(error); task.updatedAt = Date.now(); task.activity.push(task.error); await saveTask(task); status.text = '$(hubot) Workers'; vscode.window.showErrorMessage(String(error)); }
 }
+const convKey = 'localCliWorkers.conversation';
+
+/** A chat that belongs to the workspace, not to either provider: it survives one of them running dry. */
+async function chat(): Promise<void> {
+  const text = await vscode.window.showInputBox({
+    prompt: 'Message', placeHolder: 'Ask anything; it continues on whichever worker has quota' });
+  if (!text) return;
+  const stored = contextState.get<Conversation>(convKey);
+  const conv = stored ?? newConversation();
+  const cfg = readConfig();
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  output.show(true);
+  output.appendLine(`\nYou: ${text}`);
+  status.text = '$(sync~spin) chat';
+  try {
+    const reply = await say(manager, conv, text, { cwd, timeoutMs: cfg.taskTimeoutMs });
+    const models = cfg.modelIds as Record<string, string | undefined>;
+    const who = `${reply.worker}${models[reply.worker] ? ` (${models[reply.worker]})` : ''}`;
+    if (reply.replayed) output.appendLine(`>> ${who} picked the conversation up and was given the transcript.`);
+    output.appendLine(`${who}: ${reply.text}`);
+    if (reply.tokens) output.appendLine(`   [${reply.tokens.input ?? '?'} in / ${reply.tokens.output ?? '?'} out]`);
+    await contextState.update(convKey, conv);
+    status.text = `$(comment-discussion) ${reply.worker}`;
+  } catch (error) {
+    status.text = '$(hubot) Workers';
+    output.appendLine(`!! ${String(error)}`);
+    vscode.window.showErrorMessage(String(error));
+  }
+}
+
+async function newChat(): Promise<void> {
+  await contextState.update(convKey, undefined);
+  output.appendLine('\n-- new conversation --');
+  vscode.window.showInformationMessage('Local CLI Workers: started a new conversation.');
+}
+
 async function saveTask(task: AgentTask): Promise<void> {
   const tasks = contextState.get<AgentTask[]>(tasksKey, []).filter(t => t.id !== task.id);
   await contextState.update(tasksKey, [...tasks, task].slice(-100));

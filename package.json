@@ -19,6 +19,14 @@
 	"contributes": {
 		"commands": [
 			{
+				"command": "localCliWorkers.chat",
+				"title": "Local CLI Workers: Chat"
+			},
+			{
+				"command": "localCliWorkers.newChat",
+				"title": "Local CLI Workers: New Conversation"
+			},
+			{
 				"command": "localCliWorkers.runTask",
 				"title": "Local CLI Workers: Run Task"
 			},

@@ -43,7 +43,7 @@ export class LocalCliAdapter implements WorkerAdapter {
         // Prompt is passed as an argument, never through a shell, to avoid injection.
         // stdin must be closed, not inherited: spawned without a tty both CLIs sit waiting for piped input
         // ("no stdin data received in 3s") and the prompt in argv is never run.
-        child = spawn(this.command, this.argumentsFor(request.prompt), {
+        child = spawn(this.command, this.argumentsFor(request.prompt, request.resumeId), {
           cwd: request.cwd, shell: false, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe']
         });
       } catch (error) {
@@ -63,8 +63,10 @@ export class LocalCliAdapter implements WorkerAdapter {
         if (timer) clearTimeout(timer);
         const text = output.join('');
         const limited = isRateLimited(text, code);
+        const meta = code === 0 ? this.readMeta(text) : {};
         resolve({ worker: this.id, exitCode: code, output: text, durationMs: Date.now() - started,
-                  rateLimited: limited, resetAt: limited ? parseResetAt(text) : undefined });
+                  rateLimited: limited, resetAt: limited ? parseResetAt(text) : undefined,
+                  sessionId: meta.sessionId, tokens: meta.tokens });
       });
       if (request.timeoutMs) {
         timer = setTimeout(() => {
@@ -98,25 +100,75 @@ export class LocalCliAdapter implements WorkerAdapter {
     });
   }
 
-  protected argumentsFor(prompt: string): string[] { return ['--prompt', prompt]; }
+  protected argumentsFor(prompt: string, _resumeId?: string): string[] { return ['--prompt', prompt]; }
   protected authArguments(): string[] { return ['auth', 'status']; }
+  /** The provider's session id and token counts, dug out of whatever the CLI printed. */
+  protected readMeta(_output: string): { sessionId?: string; tokens?: { input?: number; output?: number } } { return {}; }
 }
 
 export class CodexAdapter extends LocalCliAdapter {
   constructor(command: string, private readonly sandbox = 'read-only', model?: string) { super('codex', command, model); }
   // `exec -- <prompt>` makes codex wait on stdin instead of reading the prompt, and it refuses to run outside
   // a trusted git repo. The prompt is positional, and the sandbox is stated so nothing waits for approval.
-  protected argumentsFor(prompt: string): string[] {
-    return ['exec', '--sandbox', this.sandbox, '--skip-git-repo-check',
+  protected argumentsFor(prompt: string, resumeId?: string): string[] {
+    const head = resumeId ? ['exec', 'resume', resumeId] : ['exec'];
+    return [...head, '--json', '--sandbox', this.sandbox, '--skip-git-repo-check',
             ...(this.model ? ['-m', this.model] : []), prompt];
   }
   protected authArguments(): string[] { return ['login', 'status']; }
+
+  /** codex --json prints one event per line: thread.started carries the id, turn.completed the usage. */
+  protected readMeta(out: string): { sessionId?: string; tokens?: { input?: number; output?: number } } {
+    let sessionId: string | undefined;
+    let tokens: { input?: number; output?: number } | undefined;
+    for (const line of out.split('\n')) {
+      const s = line.trim();
+      if (!s.startsWith('{')) continue;
+      try {
+        const e = JSON.parse(s) as { type?: string; thread_id?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+        if (e.type === 'thread.started' && e.thread_id) sessionId = e.thread_id;
+        if (e.usage) tokens = { input: e.usage.input_tokens, output: e.usage.output_tokens };
+      } catch { /* a partial line mid-stream: the next one will parse */ }
+    }
+    return { sessionId, tokens };
+  }
+
+  /** The assistant's words, with the event envelope taken off. */
+  static answer(out: string): string {
+    const parts: string[] = [];
+    for (const line of out.split('\n')) {
+      const s = line.trim();
+      if (!s.startsWith('{')) continue;
+      try {
+        const e = JSON.parse(s) as { type?: string; item?: { type?: string; text?: string } };
+        if (e.type === 'item.completed' && e.item?.type === 'agent_message' && e.item.text) parts.push(e.item.text);
+      } catch { /* ignore */ }
+    }
+    return parts.join('\n').trim();
+  }
 }
 export class ClaudeAdapter extends LocalCliAdapter {
   constructor(command: string, model?: string) { super('claude', command, model); }
   // without --model the CLI picks its default, which on a Pro plan answers "requires usage credits"
-  protected argumentsFor(prompt: string): string[] {
-    return [...(this.model ? ['--model', this.model] : []), '-p', prompt];
+  protected argumentsFor(prompt: string, resumeId?: string): string[] {
+    return [...(this.model ? ['--model', this.model] : []),
+            ...(resumeId ? ['--resume', resumeId] : []),
+            '-p', '--output-format', 'json', prompt];
+  }
+
+  protected readMeta(out: string): { sessionId?: string; tokens?: { input?: number; output?: number } } {
+    try {
+      const j = JSON.parse(out.trim()) as { session_id?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+      return { sessionId: j.session_id, tokens: j.usage ? { input: j.usage.input_tokens, output: j.usage.output_tokens } : undefined };
+    } catch { return {}; }
+  }
+
+  /** claude --output-format json wraps the reply; fall back to the raw text when it is not JSON. */
+  static answer(out: string): string {
+    try {
+      const j = JSON.parse(out.trim()) as { result?: string; text?: string };
+      return (j.result ?? j.text ?? '').trim() || out.trim();
+    } catch { return out.trim(); }
   }
   protected authArguments(): string[] { return ['auth', 'status']; }
 }

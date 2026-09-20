@@ -13,6 +13,8 @@ export interface WorkerProfile {
 export interface TaskRequest {
   prompt: string;
   cwd: string;
+  /** Continue this provider-side session instead of starting a new one. */
+  resumeId?: string;
   worker?: WorkerSelection;
   timeoutMs?: number;
   context?: { file?: string; selection?: string; language?: string };
@@ -21,6 +23,22 @@ export interface TaskRequest {
 export interface StreamChunk {
   text: string;
   stream: 'stdout' | 'stderr';
+}
+
+export interface Turn {
+  role: 'user' | 'assistant';
+  text: string;
+  worker?: WorkerId;
+  at: number;
+}
+
+/** A conversation that survives a provider running out: the turns are ours, the session ids are theirs. */
+export interface Conversation {
+  id: string;
+  turns: Turn[];
+  sessions: Partial<Record<WorkerId, string>>;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface TaskResult {
@@ -33,6 +51,10 @@ export interface TaskResult {
   rateLimited?: boolean;
   /** When the window is expected to reset, when the CLI said so. */
   resetAt?: number;
+  /** The provider's own session/thread id, so the next turn on this worker resumes instead of replaying. */
+  sessionId?: string;
+  /** Tokens this turn cost, when the CLI reported them. */
+  tokens?: { input?: number; output?: number };
 }
 
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';

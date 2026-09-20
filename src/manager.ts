@@ -31,6 +31,9 @@ export class WorkerManager {
     return false;
   }
 
+  /** Who auto-routing would pick right now, so a caller can prepare that worker's prompt. */
+  preferredWorker(): WorkerId | undefined { return this.peekNext([]); }
+
   /** Who would take the task next, for the message that says where it is going. */
   private peekNext(excluded: WorkerId[]): WorkerId | undefined {
     try { return this.choose('auto', excluded); } catch { return undefined; }
