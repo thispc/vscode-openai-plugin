@@ -110,3 +110,31 @@ test('the limited event names who is taking over', async () => {
   assert.match(seen[0].reason ?? '', /usage limit/, 'and why, in the CLI own words');
   assert.deepEqual(result.attempts, ['codex', 'claude']);
 });
+
+test('a cancelled task is not handed to the next worker', async () => {
+  class Cancels implements WorkerAdapter {
+    readonly id = 'codex' as const;
+    run(): TaskHandle {
+      return { promise: Promise.reject(new Error('codex task cancelled')), cancel() {} };
+    }
+    checkAuth(): Promise<AuthStatus> { return Promise.resolve({ authenticated: true, detail: 'ok' }); }
+  }
+  const manager = new WorkerManager({ codex: new Cancels(), claude: new Fake('claude') });
+  await assert.rejects(() => manager.run({ prompt: 'x', cwd: '.', worker: 'auto' }, () => {}), /cancelled/);
+  assert.equal(manager.snapshots().find(s => s.worker === 'codex')?.failures, 0,
+    'cancelling is my decision, not the worker failing');
+});
+
+test('a request both workers would reject is not retried on the second', async () => {
+  class BadFlag implements WorkerAdapter {
+    readonly id = 'codex' as const;
+    run(): TaskHandle {
+      return { promise: Promise.resolve<TaskResult>({ worker: 'codex', exitCode: 2, durationMs: 1,
+        output: 'error: unknown option --nope', rateLimited: false }), cancel() {} };
+    }
+    checkAuth(): Promise<AuthStatus> { return Promise.resolve({ authenticated: true, detail: 'ok' }); }
+  }
+  const manager = new WorkerManager({ codex: new BadFlag(), claude: new Fake('claude') });
+  const result = await manager.run({ prompt: 'x', cwd: '.', worker: 'auto' }, () => {});
+  assert.deepEqual(result.attempts, ['codex'], 'no point spending claude quota on the same bad request');
+});

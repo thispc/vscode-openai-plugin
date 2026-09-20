@@ -1,6 +1,12 @@
 import { TaskRequest, TaskResult, WorkerAdapter, WorkerId, UsageSnapshot, TaskHandle, StreamChunk, WorkerSelection } from './models';
 import { EventEmitter } from 'node:events';
 
+/** A failure the other worker would hit too: trying it again there only spends more quota. */
+function worthRetrying(reason: unknown): boolean {
+  const text = String((reason as { message?: string })?.message ?? reason);
+  return !/cancel|abort|not authenticated|unauthori[sz]ed|invalid (argument|model|flag)|unknown option|no such file/i.test(text);
+}
+
 export class WorkerManager {
   readonly events = new EventEmitter();
   private readonly usage = new Map<WorkerId, UsageSnapshot>();
@@ -75,12 +81,18 @@ export class WorkerManager {
         }
         this.active.delete(taskId);
         this.events.emit('finished', { taskId, result });
-        if (result.exitCode !== 0 && index + 1 < candidates.length) return attempt(index + 1);
+        // fall back for a spent window or a worker-specific failure, never for a request the other worker
+        // would reject the same way (bad flag, bad model, not signed in)
+        if (result.exitCode !== 0 && index + 1 < candidates.length
+            && (result.rateLimited || worthRetrying(result.output))) return attempt(index + 1);
         return { ...result, attempts };
       }, error => {
-        stats.running--; stats.failures++; stats.available = stats.failures < this.failureThreshold; this.active.delete(taskId);
+        stats.running--; this.active.delete(taskId);
+        const retry = worthRetrying(error);
+        if (retry) { stats.failures++; stats.available = stats.failures < this.failureThreshold; }
         this.events.emit('failed', { taskId, error });
-        if (index + 1 < candidates.length) return attempt(index + 1);
+        // a cancelled task is the user's decision, not a worker fault: never hand it to the next one
+        if (retry && index + 1 < candidates.length) return attempt(index + 1);
         throw error;
       });
     };
