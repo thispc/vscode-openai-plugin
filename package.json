@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "publisher": "local-cli-workers",
   "license": "MIT",
-  "repository": "https://example.invalid/local-cli-workers",
+  "repository": "https://github.com/thispc/vscode-openai-plugin",
   "engines": { "vscode": "^1.88.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
@@ -33,8 +33,7 @@
         "localCliWorkers.taskTimeoutMs": { "type": "number", "default": 600000, "minimum": 1000 },
         "localCliWorkers.showWorkerTerminals": { "type": "boolean", "default": true },
         "localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1 },
-        "localCliWorkers.usageThreshold": { "type": "number", "default": 20, "minimum": 1 }
-        ,"localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1, "maximum": 20 },
+        "localCliWorkers.failureThreshold": { "type": "number", "default": 3, "minimum": 1, "maximum": 20 },
         "localCliWorkers.usageThreshold": { "type": "number", "default": 20, "minimum": 1, "maximum": 10000 }
       }
     }
