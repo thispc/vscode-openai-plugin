@@ -27,6 +27,10 @@
 				"title": "Local CLI Workers: New Conversation"
 			},
 			{
+				"command": "localCliWorkers.chatInput",
+				"title": "Local CLI Workers: Chat (input box)"
+			},
+			{
 				"command": "localCliWorkers.runTask",
 				"title": "Local CLI Workers: Run Task"
 			},

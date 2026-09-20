@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { readConfig } from './config';
 import { createAdapters } from './adapters';
 import { say, newConversation } from './chat';
+import { ChatPanel } from './panel';
 import { Conversation } from './models';
 import { WorkerAdapter, WorkerId, AgentTask, WorkerSelection } from './models';
 import { WorkerManager } from './manager';
@@ -54,7 +55,9 @@ export function activate(context: vscode.ExtensionContext): void {
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'localCliWorkers.runTask'; status.text = '$(hubot) Workers'; status.tooltip = 'Run a local CLI worker task'; status.show();
   context.subscriptions.push(status, output,
-    vscode.commands.registerCommand('localCliWorkers.chat', chat),
+    vscode.commands.registerCommand('localCliWorkers.chat',
+      () => ChatPanel.show(context, manager, readConfig().modelIds as Record<string, string | undefined>, readConfig().taskTimeoutMs)),
+    vscode.commands.registerCommand('localCliWorkers.chatInput', chat),
     vscode.commands.registerCommand('localCliWorkers.newChat', newChat));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('localCliWorkers.tasks', taskTree));
   context.subscriptions.push(vscode.commands.registerCommand('localCliWorkers.runTask', runTask));

@@ -28,6 +28,33 @@ export function isRateLimited(output: string, exitCode: number | null): boolean 
   return exitCode !== 0 && RATE_LIMITED.test(output);
 }
 
+/** Whole JSON objects in a chunk of JSONL, skipping partial lines mid-stream. */
+export function jsonLines(raw: string): unknown[] {
+  const out: unknown[] = [];
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s.startsWith('{')) continue;
+    try { out.push(JSON.parse(s)); } catch { /* the rest of this line is in the next chunk */ }
+  }
+  return out;
+}
+
+/**
+ * claude's stream says outright when a window is spent, before the run fails: a rate_limit_event whose status
+ * is not "allowed" carries the reset as a unix time. Nothing to guess from an error message.
+ */
+export function readRateLimitEvent(raw: string): { limited: boolean; resetAt?: number } | undefined {
+  for (const e of jsonLines(raw)) {
+    const o = e as { type?: string; rate_limit_info?: { status?: string; resetsAt?: number } };
+    if (o.type === 'rate_limit_event' && o.rate_limit_info) {
+      const info = o.rate_limit_info;
+      return { limited: (info.status ?? 'allowed') !== 'allowed',
+               resetAt: info.resetsAt ? info.resetsAt * 1000 : undefined };
+    }
+  }
+  return undefined;
+}
+
 export class LocalCliAdapter implements WorkerAdapter {
   constructor(public readonly id: WorkerId, private readonly command: string, protected readonly model?: string) {}
 
@@ -64,8 +91,10 @@ export class LocalCliAdapter implements WorkerAdapter {
         const text = output.join('');
         const limited = isRateLimited(text, code);
         const meta = code === 0 ? this.readMeta(text) : {};
+        const event = readRateLimitEvent(text);
+        const spent = limited || (code !== 0 && event?.limited === true);
         resolve({ worker: this.id, exitCode: code, output: text, durationMs: Date.now() - started,
-                  rateLimited: limited, resetAt: limited ? parseResetAt(text) : undefined,
+                  rateLimited: spent, resetAt: spent ? (event?.resetAt ?? parseResetAt(text)) : undefined,
                   sessionId: meta.sessionId, tokens: meta.tokens });
       });
       if (request.timeoutMs) {
@@ -134,41 +163,61 @@ export class CodexAdapter extends LocalCliAdapter {
   }
 
   /** The assistant's words, with the event envelope taken off. */
-  static answer(out: string): string {
+  static answer(out: string): string { return CodexAdapter.streamText(out).trim(); }
+
+  /** codex reports finished messages rather than tokens, so text lands a message at a time. */
+  static streamText(raw: string): string {
     const parts: string[] = [];
-    for (const line of out.split('\n')) {
-      const s = line.trim();
-      if (!s.startsWith('{')) continue;
-      try {
-        const e = JSON.parse(s) as { type?: string; item?: { type?: string; text?: string } };
-        if (e.type === 'item.completed' && e.item?.type === 'agent_message' && e.item.text) parts.push(e.item.text);
-      } catch { /* ignore */ }
+    for (const e of jsonLines(raw)) {
+      const o = e as { type?: string; item?: { type?: string; text?: string } };
+      if (o.type === 'item.completed' && o.item?.type === 'agent_message' && o.item.text) parts.push(o.item.text);
     }
-    return parts.join('\n').trim();
+    return parts.join('\n');
   }
 }
 export class ClaudeAdapter extends LocalCliAdapter {
   constructor(command: string, model?: string) { super('claude', command, model); }
   // without --model the CLI picks its default, which on a Pro plan answers "requires usage credits"
+  // stream-json gives the reply a token at a time, which is what makes the panel feel like a conversation
+  // rather than a progress bar. --verbose is required alongside it.
   protected argumentsFor(prompt: string, resumeId?: string): string[] {
     return [...(this.model ? ['--model', this.model] : []),
             ...(resumeId ? ['--resume', resumeId] : []),
-            '-p', '--output-format', 'json', prompt];
+            '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose', prompt];
   }
 
   protected readMeta(out: string): { sessionId?: string; tokens?: { input?: number; output?: number } } {
-    try {
-      const j = JSON.parse(out.trim()) as { session_id?: string; usage?: { input_tokens?: number; output_tokens?: number } };
-      return { sessionId: j.session_id, tokens: j.usage ? { input: j.usage.input_tokens, output: j.usage.output_tokens } : undefined };
-    } catch { return {}; }
+    let sessionId: string | undefined;
+    let tokens: { input?: number; output?: number } | undefined;
+    for (const e of jsonLines(out)) {
+      const o = e as { session_id?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+      if (o.session_id) sessionId = o.session_id;
+      if (o.usage) tokens = { input: o.usage.input_tokens, output: o.usage.output_tokens };
+    }
+    return { sessionId, tokens };
   }
 
-  /** claude --output-format json wraps the reply; fall back to the raw text when it is not JSON. */
+  /** The words, gathered from the deltas, with the final result line as a fallback. */
   static answer(out: string): string {
-    try {
-      const j = JSON.parse(out.trim()) as { result?: string; text?: string };
-      return (j.result ?? j.text ?? '').trim() || out.trim();
-    } catch { return out.trim(); }
+    const streamed = ClaudeAdapter.streamText(out);
+    if (streamed.trim()) return streamed.trim();
+    for (const e of jsonLines(out)) {
+      const o = e as { result?: string };
+      if (typeof o.result === 'string') return o.result.trim();
+    }
+    return out.trim();
+  }
+
+  /** Display text inside one raw chunk, for painting the reply as it arrives. */
+  static streamText(raw: string): string {
+    let text = '';
+    for (const e of jsonLines(raw)) {
+      const o = e as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string } } };
+      if (o.type === 'stream_event' && o.event?.type === 'content_block_delta' && o.event.delta?.type === 'text_delta') {
+        text += o.event.delta.text ?? '';
+      }
+    }
+    return text;
   }
   protected authArguments(): string[] { return ['auth', 'status']; }
 }
